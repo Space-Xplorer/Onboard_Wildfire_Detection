@@ -1,0 +1,7 @@
+#Packages & Caches
+node_modules/
+/venv
+/venv_wsl
+__pycache__/
+*.pyc
+src/data/
