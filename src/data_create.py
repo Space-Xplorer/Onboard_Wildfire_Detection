@@ -98,12 +98,29 @@ for i in range(NUM_SAMPLES):
 
     elif r < 0.8:
         # --- CLASS 1: EARLY/SMOLDERING FIRE ---
-        # Ground is hot but not flaming (350K - 500K)
-        # SWIR is brighter due to heat emission (Apparent Refl 0.4 - 0.8)
+        # Use Gaussian blob: fires are connected hotspots, not scattered pixels
+        # Background temp = 300K, then add Gaussian blob
         label = 1
         
-        refl_map = np.random.uniform(0.4, 0.8, (PATCH_SIZE, PATCH_SIZE))
-        temp_map = np.random.uniform(340, 380, (PATCH_SIZE, PATCH_SIZE)) # Near saturation
+        # Start with background temperature
+        temp_map = np.random.normal(300, 5, (PATCH_SIZE, PATCH_SIZE))
+        refl_map = np.random.normal(0.15, 0.08, (PATCH_SIZE, PATCH_SIZE))
+        
+        # Add Gaussian blob for fire hotspot
+        x0, y0 = np.random.randint(5, PATCH_SIZE-5, 2)
+        sigma = np.random.uniform(2, 4)
+        x, y = np.meshgrid(np.arange(PATCH_SIZE), np.arange(PATCH_SIZE))
+        d = np.sqrt((x - x0)**2 + (y - y0)**2)
+        blob = np.exp(-(d**2) / (2.0 * sigma**2))
+        
+        # Add heat from blob (smoldering: +60K from background)
+        temp_map += blob * 60
+        # Add reflectance from blob (smoldering: +0.35)
+        refl_map += blob * 0.35
+        
+        # Clip to physics limits
+        temp_map = np.clip(temp_map, 280, 600)
+        refl_map = np.clip(refl_map, 0.05, 1.0)
         
         for x in range(PATCH_SIZE):
             for y in range(PATCH_SIZE):
@@ -112,13 +129,28 @@ for i in range(NUM_SAMPLES):
 
     else:
         # --- CLASS 1: ACTIVE FLAMING FIRE ---
-        # Intense heat. 
-        # Band 7 (SWIR) gets saturated or extremely high (Apparent Refl > 1.5)
-        # Band 10 (Thermal) is almost certainly SATURATED (MAX_DN)
+        # Intense heat with bright Gaussian blob
         label = 1
         
-        refl_map = np.random.uniform(1.2, 2.5, (PATCH_SIZE, PATCH_SIZE)) # Emitting light
-        temp_map = np.random.uniform(400, 1000, (PATCH_SIZE, PATCH_SIZE)) # Way past saturation
+        # Start with warm background
+        temp_map = np.random.normal(300, 5, (PATCH_SIZE, PATCH_SIZE))
+        refl_map = np.random.normal(0.15, 0.08, (PATCH_SIZE, PATCH_SIZE))
+        
+        # Add Gaussian blob for intense fire
+        x0, y0 = np.random.randint(5, PATCH_SIZE-5, 2)
+        sigma = np.random.uniform(2, 5)
+        x, y = np.meshgrid(np.arange(PATCH_SIZE), np.arange(PATCH_SIZE))
+        d = np.sqrt((x - x0)**2 + (y - y0)**2)
+        blob = np.exp(-(d**2) / (2.0 * sigma**2))
+        
+        # Add intense heat from blob (active fire: +500K from background)
+        temp_map += blob * 500
+        # Add bright reflectance from blob (active fire: +2.0)
+        refl_map += blob * 2.0
+        
+        # Clip to physics limits
+        temp_map = np.clip(temp_map, 280, 1000)
+        refl_map = np.clip(refl_map, 0.05, 2.5)
         
         for x in range(PATCH_SIZE):
             for y in range(PATCH_SIZE):

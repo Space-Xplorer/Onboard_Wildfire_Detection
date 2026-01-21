@@ -137,12 +137,13 @@ class FlightComputer:
         
         return trigger_active
     
-    def stage_2_ai_inference(self, band10_dn):
+    def stage_2_ai_inference(self, band7_dn, band10_dn):
         """
-        Stage 2: AI inference on thermal patch.
-        Runs quantized INT8 MobileNetV2 model.
+        Stage 2: AI inference on dual-band thermal patch.
+        Runs quantized INT8 TinyFireNet model.
         
         Args:
+            band7_dn (np.ndarray): SWIR patch (32x32, uint16 or float32)
             band10_dn (np.ndarray): Thermal patch (32x32, uint16 or float32)
         
         Returns:
@@ -155,14 +156,25 @@ class FlightComputer:
                 print(f"[AI] MODEL NOT LOADED. Defaulting to 0% confidence.")
             return 0, 0.0
         
-        # Normalize to 0-1 (same as training)
-        thermal_normalized = band10_dn.astype(np.float32)
-        thermal_min, thermal_max = 22000, 65535
-        thermal_normalized = (thermal_normalized - thermal_min) / (thermal_max - thermal_min)
-        thermal_normalized = np.clip(thermal_normalized, 0.0, 1.0)
+        # Normalize BOTH bands the same way as training
+        band7_normalized = band7_dn.astype(np.float32)
+        band10_normalized = band10_dn.astype(np.float32)
         
-        # Add batch and channel dimensions (1, 32, 32, 1)
-        input_data = thermal_normalized.reshape(1, 32, 32, 1).astype(
+        # Min-max normalization (matching train_model.py)
+        band7_min, band7_max = band7_normalized.min(), band7_normalized.max()
+        band10_min, band10_max = band10_normalized.min(), band10_normalized.max()
+        
+        band7_range = band7_max - band7_min + 1e-10
+        band10_range = band10_max - band10_min + 1e-10
+        
+        band7_normalized = (band7_normalized - band7_min) / band7_range
+        band10_normalized = (band10_normalized - band10_min) / band10_range
+        
+        # Stack into dual-channel (32, 32, 2)
+        dual_band = np.stack([band7_normalized, band10_normalized], axis=-1)
+        
+        # Add batch dimension: (1, 32, 32, 2)
+        input_data = dual_band.reshape(1, 32, 32, 2).astype(
             self.input_details[0]['dtype']
         )
         
@@ -171,19 +183,12 @@ class FlightComputer:
         self.interpreter.invoke()
         output = self.interpreter.get_tensor(self.output_details[0]['index'])
         
-        # Parse output (binary classification: [no_fire_logit, fire_logit] or single sigmoid)
-        if len(output.shape) > 1 and output.shape[-1] == 2:
-            # Two-class output
-            fire_logit = output[0, 1]
-            fire_prob = 1.0 / (1.0 + np.exp(-fire_logit))
-        else:
-            # Single output (sigmoid)
-            fire_prob = float(output.flat[0])
-            # Clamp to [0, 1] in case quantization artifacts exist
-            fire_prob = np.clip(fire_prob, 0.0, 1.0)
+        # Parse output (single sigmoid output for binary classification)
+        fire_prob = float(output.flat[0])
+        fire_prob = np.clip(fire_prob, 0.0, 1.0)
         
         confidence = fire_prob * 100.0
-        fire_class = 1 if confidence > 50 else 0
+        fire_class = 1 if fire_prob > 0.5 else 0
         
         if self.verbose:
             class_name = "FIRE" if fire_class else "NO_FIRE"
@@ -272,7 +277,7 @@ class FlightComputer:
             
             # ===== STAGE 2: AI Inference =====
             print("\n[SAT] Stage 2: AI Inference")
-            fire_class, confidence = self.stage_2_ai_inference(band10_dn)
+            fire_class, confidence = self.stage_2_ai_inference(band7_dn, band10_dn)
             results['ai_detection'] = (fire_class == 1)
             results['confidence'] = confidence
             
