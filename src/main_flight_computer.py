@@ -18,6 +18,7 @@ sys.path.insert(0, SCRIPT_DIR)
 import tensorflow as tf
 from flight_logic import dn_to_kelvin, check_trigger, FIRE_TEMP_THRESHOLD_K
 from telemetry_encoder import CCSDSFireAlertPacket
+from profiler import PerformanceProfiler
 
 # ===== FLIGHT SOFTWARE CONFIGURATION =====
 
@@ -63,6 +64,9 @@ class FlightComputer:
         self.triggers_fired = 0
         self.ai_detections = 0
         self.packets_downlinked = 0
+        
+        # Performance profiling
+        self.profiler = PerformanceProfiler()
         
         self._load_model()
     
@@ -265,7 +269,8 @@ class FlightComputer:
         try:
             # ===== STAGE 1: Physics Trigger =====
             print("\n[SAT] Stage 1: Physics Trigger")
-            trigger = self.stage_1_physics_trigger(band7_dn, band10_dn)
+            with self.profiler.profile_stage("Stage 1: Physics Trigger"):
+                trigger = self.stage_1_physics_trigger(band7_dn, band10_dn)
             results['physics_trigger'] = trigger
             
             if not trigger:
@@ -277,7 +282,8 @@ class FlightComputer:
             
             # ===== STAGE 2: AI Inference =====
             print("\n[SAT] Stage 2: AI Inference")
-            fire_class, confidence = self.stage_2_ai_inference(band7_dn, band10_dn)
+            with self.profiler.profile_stage("Stage 2: AI Inference"):
+                fire_class, confidence = self.stage_2_ai_inference(band7_dn, band10_dn)
             results['ai_detection'] = (fire_class == 1)
             results['confidence'] = confidence
             
@@ -288,7 +294,8 @@ class FlightComputer:
             
             # ===== STAGE 3: Telemetry Downlink =====
             print("\n[SAT] Stage 3: Telemetry Downlink")
-            packet_hex = self.stage_3_telemetry_downlink(fire_class, confidence, sample_id)
+            with self.profiler.profile_stage("Stage 3: CCSDS Telemetry"):
+                packet_hex = self.stage_3_telemetry_downlink(fire_class, confidence, sample_id)
             results['packet_hex'] = packet_hex
         
         except Exception as e:
@@ -309,8 +316,9 @@ class FlightComputer:
         print(f"  Packets downlinked:   {self.packets_downlinked}")
         print(f"  Trigger rate:         {100*self.triggers_fired/max(1,self.frames_processed):.1f}%")
         print(f"  Detection rate:       {100*self.ai_detections/max(1,self.triggers_fired):.1f}%")
-        print(f"{'='*60}\n")
-
+        print(f"{'='*60}\n")        
+        # Print performance metrics
+        self.profiler.print_report()
 
 # ===== DEMO EXECUTION =====
 
